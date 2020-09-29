@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -34,6 +33,8 @@ func main() {
 		log.Fatal(err)
 	}
 
+	defer discord.Close()
+
 	// Open a websocket connection to Discord and begin listening.
 	err = discord.Open()
 	if err != nil {
@@ -61,18 +62,6 @@ func main() {
 		text := scanner.Text()
 
 		sound, err := textToSpeech(ctx, text, client)
-
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		buff := bytes.NewBuffer(sound)
-		err = dcaEncode(buff)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		err = loadSound()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -84,10 +73,18 @@ func main() {
 		}
 		fmt.Printf("Audio content written to file: %v\n", filename)
 
+		err = dcaEncode()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		err = loadSound()
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		playSound(voiceChannel)
 	}
-
-	discord.Close()
 
 }
 
@@ -105,7 +102,7 @@ func textToSpeech(ctx context.Context, text string, client *texttospeech.Client)
 		// voice gender ("neutral").
 		Voice: &texttospeechpb.VoiceSelectionParams{
 			LanguageCode: "pt-BR",
-			SsmlGender:   texttospeechpb.SsmlVoiceGender_NEUTRAL,
+			SsmlGender:   texttospeechpb.SsmlVoiceGender_FEMALE,
 		},
 		// Select the type of audio file you want returned.
 		AudioConfig: &texttospeechpb.AudioConfig{
@@ -138,6 +135,8 @@ func playSound(vc *discordgo.VoiceConnection) {
 		vc.OpusSend <- buff
 	}
 
+	buffer = make([][]byte, 0)
+
 	// Stop speaking
 	vc.Speaking(false)
 
@@ -151,7 +150,6 @@ func requestToJoin(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	fmt.Println(m.Content)
 	// check if the message is "!airhorn"
 	if strings.HasPrefix(m.Content, "!join") {
 		s.ChannelMessageSend(m.ChannelID, "Pong!")
@@ -174,22 +172,24 @@ func requestToJoin(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 		// Look for the message sender in that guild's current voice states.
 		for _, vs := range g.VoiceStates {
-			fmt.Println("userID", vs.UserID, "authorID", m.Author.ID)
 
-			if vs.UserID == m.Author.ID {
+			if vs.UserID == m.Author.ID && m.Author.ID == os.Getenv("USER") {
 				voiceChannel, err = s.ChannelVoiceJoin(g.ID, vs.ChannelID, false, true)
 				if err != nil {
-					log.Println("kkkk", err)
+					log.Println(err)
 				}
 			}
 		}
 	}
 }
 
-func dcaEncode(data io.Reader) error {
+func dcaEncode() error {
 	// Encoding a file and saving it to disk
 
-	encodeSession, err := dca.EncodeMem(data, dca.StdEncodeOptions)
+	options := dca.StdEncodeOptions
+	options.RawOutput = true
+	encodeSession, err := dca.EncodeFile("output.mp3", options)
+
 	if err != nil {
 		return err
 	}
@@ -197,6 +197,7 @@ func dcaEncode(data io.Reader) error {
 	defer encodeSession.Cleanup()
 
 	output, err := os.Create("output.dca")
+
 	if err != nil {
 		return err
 	}
@@ -214,6 +215,8 @@ func loadSound() error {
 		return err
 	}
 
+	// defer file.Close()
+
 	var opuslen int16
 
 	for {
@@ -230,7 +233,7 @@ func loadSound() error {
 		}
 
 		if err != nil {
-			fmt.Println("Error reading from dca file :", err)
+			fmt.Println("Error reading from dca file 1 :", err)
 			return err
 		}
 
@@ -240,7 +243,7 @@ func loadSound() error {
 
 		// Should not be any end of file errors
 		if err != nil {
-			fmt.Println("Error reading from dca file :", err)
+			fmt.Println("Error reading from dca file 2:", err)
 			return err
 		}
 
